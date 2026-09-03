@@ -28,6 +28,7 @@ func New(baseDir string) *DB {
 	}
 }
 
+// File opens an encrypted Tacenva database file using the provided password.
 func (db *DB) File(
 	filename string,
 	password string,
@@ -48,22 +49,18 @@ func (db *DB) File(
 		file.KDF.Salt,
 	)
 
-	decrypted, err := db.crypto.Decrypt(
-		file.Data,
-		key,
-	)
-	if err != nil {
-		return nil, err
-	}
+	data := make(map[string]json.RawMessage)
 
-	var data map[string]json.RawMessage
+	for _, record := range file.Records {
+		decrypted, err := db.crypto.Decrypt(
+			record.Data,
+			key,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-	if err := json.Unmarshal(decrypted, &data); err != nil {
-		return nil, err
-	}
-
-	if data == nil {
-		data = make(map[string]json.RawMessage)
+		data[record.ID] = decrypted
 	}
 
 	return &DatabaseFile{
@@ -76,20 +73,24 @@ func (db *DB) File(
 }
 
 func (f *DatabaseFile) save() error {
-	plain, err := json.Marshal(f.data)
-	if err != nil {
-		return err
+	records := make([]structure.EncryptedRecord, 0, len(f.data))
+
+	for id, raw := range f.data {
+		encrypted, err := f.db.crypto.Encrypt(
+			raw,
+			f.key,
+		)
+		if err != nil {
+			return err
+		}
+
+		records = append(records, structure.EncryptedRecord{
+			ID:   id,
+			Data: encrypted,
+		})
 	}
 
-	encrypted, err := f.db.crypto.Encrypt(
-		plain,
-		f.key,
-	)
-	if err != nil {
-		return err
-	}
-
-	f.file.Data = encrypted
+	f.file.Records = records
 
 	blob, err := json.MarshalIndent(
 		f.file,

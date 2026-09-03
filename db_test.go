@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tacenva/database/internal/crypto"
 	"github.com/tacenva/database/internal/structure"
 )
 
-type TestUser struct {
+type User struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Age    int    `json:"age"`
@@ -18,6 +19,73 @@ type TestUser struct {
 }
 
 func createTestDatabase(
+	t *testing.T,
+	baseDir string,
+	filename string,
+	password string,
+) {
+	t.Helper()
+
+	file := structure.File{
+		Version: 1,
+		Algorithm: structure.Algorithm{
+			KDF:    "argon2id",
+			Cipher: "aes-256-gcm",
+		},
+		KDF: structure.KDFParams{
+			Salt:        []byte("test-salt-123456"),
+			Memory:      64 * 1024,
+			Iterations:  3,
+			Parallelism: 2,
+		},
+		Records: []structure.EncryptedRecord{},
+	}
+
+	_ = password
+
+	blob, err := json.MarshalIndent(
+		file,
+		"",
+		"  ",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(
+		filename,
+		".tacenva",
+	) {
+		filename += ".tacenva"
+	}
+
+	path := filepath.Join(
+		baseDir,
+		filename,
+	)
+
+	if err := os.MkdirAll(
+		filepath.Dir(path),
+		0700,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(
+		path,
+		blob,
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf(
+		"created database: %s",
+		path,
+	)
+}
+
+func createTestDatabaseWithRecord(
 	t *testing.T,
 	baseDir string,
 	filename string,
@@ -34,9 +102,14 @@ func createTestDatabase(
 		salt,
 	)
 
-	data := map[string]json.RawMessage{}
-
-	plain, err := json.Marshal(data)
+	plain, err := json.Marshal(
+		User{
+			ID:     "test-record",
+			Name:   "Test",
+			Age:    20,
+			Status: "active",
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +134,12 @@ func createTestDatabase(
 			Iterations:  3,
 			Parallelism: 2,
 		},
-		Data: encrypted,
+		Records: []structure.EncryptedRecord{
+			{
+				ID:   "test-record",
+				Data: encrypted,
+			},
+		},
 	}
 
 	blob, err := json.MarshalIndent(
@@ -78,6 +156,13 @@ func createTestDatabase(
 		filename,
 	)
 
+	if err := os.MkdirAll(
+		filepath.Dir(path),
+		0700,
+	); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := os.WriteFile(
 		path,
 		blob,
@@ -85,12 +170,21 @@ func createTestDatabase(
 	); err != nil {
 		t.Fatal(err)
 	}
+
+	t.Logf(
+		"created database with record: %s",
+		path,
+	)
 }
 
-func TestDBFile(t *testing.T) {
-	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
+func createAndOpenTestDatabase(
+	t *testing.T,
+	db *DB,
+	baseDir string,
+	filename string,
+	password string,
+) (*DatabaseFile, error) {
+	t.Helper()
 
 	createTestDatabase(
 		t,
@@ -99,49 +193,35 @@ func TestDBFile(t *testing.T) {
 		password,
 	)
 
-	db := New(baseDir)
-
-	users, err := db.File(
+	return db.File(
 		filename,
 		password,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if users == nil {
-		t.Fatal("expected database file, got nil")
-	}
 }
 
 func TestDatabaseFileInsert(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
 
 	db := New(baseDir)
 
-	users, err := db.File(
-		filename,
-		password,
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	user := TestUser{
-		Name: "Budi",
-		Age:  20,
+	user := User{
+		Name:   "Budi",
+		Age:    20,
+		Status: "active",
 	}
 
-	if err := users.Insert(&user); err != nil {
+	if err := dbFile.Insert(&user); err != nil {
 		t.Fatal(err)
 	}
 
@@ -149,45 +229,14 @@ func TestDatabaseFileInsert(t *testing.T) {
 		t.Fatal("expected ID to be generated")
 	}
 
-	if _, exists := users.data[user.ID]; !exists {
-		t.Fatal("expected user to be stored")
-	}
-}
-
-func TestDatabaseFileFind(t *testing.T) {
-	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
+	t.Logf(
+		"inserted user: %+v",
+		user,
 	)
 
-	db := New(baseDir)
+	var result User
 
-	users, err := db.File(
-		filename,
-		password,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	user := TestUser{
-		Name: "Budi",
-		Age:  20,
-	}
-
-	if err := users.Insert(&user); err != nil {
-		t.Fatal(err)
-	}
-
-	var result TestUser
-
-	if err := users.Find(
+	if err := dbFile.Find(
 		user.ID,
 		&result,
 	); err != nil {
@@ -202,189 +251,62 @@ func TestDatabaseFileFind(t *testing.T) {
 		)
 	}
 
-	if result.Name != "Budi" {
+	if result.Name != user.Name {
 		t.Fatalf(
 			"expected name %q, got %q",
-			"Budi",
+			user.Name,
 			result.Name,
 		)
 	}
 
-	if result.Age != 20 {
+	if result.Age != user.Age {
 		t.Fatalf(
 			"expected age %d, got %d",
-			20,
+			user.Age,
 			result.Age,
-		)
-	}
-}
-
-func TestDatabaseFileFindAll(t *testing.T) {
-	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
-
-	db := New(baseDir)
-
-	users, err := db.File(
-		filename,
-		password,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	input := []TestUser{
-		{
-			Name: "Budi",
-			Age:  20,
-		},
-		{
-			Name: "Andi",
-			Age:  25,
-		},
-		{
-			Name: "Siti",
-			Age:  30,
-		},
-	}
-
-	for i := range input {
-		if err := users.Insert(&input[i]); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var result []TestUser
-
-	if err := users.FindAll(&result); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(result) != len(input) {
-		t.Fatalf(
-			"expected %d users, got %d",
-			len(input),
-			len(result),
-		)
-	}
-}
-
-func TestDatabaseFileFindWhere(t *testing.T) {
-	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
-
-	db := New(baseDir)
-
-	users, err := db.File(
-		filename,
-		password,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	input := []TestUser{
-		{
-			Name: "Budi",
-			Age:  17,
-		},
-		{
-			Name: "Andi",
-			Age:  20,
-		},
-		{
-			Name: "Siti",
-			Age:  25,
-		},
-	}
-
-	for i := range input {
-		if err := users.Insert(&input[i]); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var result []TestUser
-
-	if err := users.FindWhere(
-		&result,
-		func(data map[string]any) bool {
-			age, ok := data["age"].(float64)
-
-			return ok && age >= 18
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(result) != 2 {
-		t.Fatalf(
-			"expected 2 users, got %d",
-			len(result),
 		)
 	}
 }
 
 func TestDatabaseFileUpdate(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
 
 	db := New(baseDir)
 
-	users, err := db.File(
-		filename,
-		password,
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	user := TestUser{
-		Name: "Budi",
-		Age:  20,
+	user := User{
+		Name:   "Budi",
+		Age:    20,
+		Status: "active",
 	}
 
-	if err := users.Insert(&user); err != nil {
+	if err := dbFile.Insert(&user); err != nil {
 		t.Fatal(err)
 	}
 
 	user.Name = "Budi Santoso"
 	user.Age = 21
 
-	if err := users.Update(
+	if err := dbFile.Update(
 		user.ID,
 		&user,
 	); err != nil {
 		t.Fatal(err)
 	}
 
-	var result TestUser
+	var result User
 
-	if err := users.Find(
+	if err := dbFile.Find(
 		user.ID,
 		&result,
 	); err != nil {
@@ -406,52 +328,54 @@ func TestDatabaseFileUpdate(t *testing.T) {
 			result.Age,
 		)
 	}
+
+	t.Logf(
+		"updated user: %+v",
+		result,
+	)
 }
 
 func TestDatabaseFileUpdateWhere(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
 
 	db := New(baseDir)
 
-	users, err := db.File(
-		filename,
-		password,
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	input := []TestUser{
+	users := []User{
 		{
-			Name: "Budi",
-			Age:  17,
+			Name:   "Budi",
+			Age:    17,
+			Status: "active",
 		},
 		{
-			Name: "Andi",
-			Age:  20,
+			Name:   "Andi",
+			Age:    20,
+			Status: "active",
 		},
 		{
-			Name: "Siti",
-			Age:  15,
+			Name:   "Siti",
+			Age:    15,
+			Status: "active",
 		},
 	}
 
-	for i := range input {
-		if err := users.Insert(&input[i]); err != nil {
+	for i := range users {
+		if err := dbFile.Insert(&users[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := users.UpdateWhere(
+	err = dbFile.UpdateWhere(
 		func(data map[string]any) bool {
 			age, ok := data["age"].(float64)
 
@@ -459,162 +383,240 @@ func TestDatabaseFileUpdateWhere(t *testing.T) {
 		},
 		func(data map[string]any) error {
 			data["status"] = "minor"
+
 			return nil
 		},
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	var result []TestUser
+	var result []User
 
-	if err := users.FindWhere(
-		&result,
-		func(data map[string]any) bool {
-			status, ok := data["status"].(string)
-
-			return ok && status == "minor"
-		},
-	); err != nil {
+	if err := dbFile.FindAll(&result); err != nil {
 		t.Fatal(err)
 	}
 
-	if len(result) != 2 {
-		t.Fatalf(
-			"expected 2 minor users, got %d",
-			len(result),
+	for _, user := range result {
+		t.Logf(
+			"user: %+v",
+			user,
 		)
+
+		if user.Age < 18 && user.Status != "minor" {
+			t.Fatalf(
+				"user %q should have status minor, got %q",
+				user.Name,
+				user.Status,
+			)
+		}
+
+		if user.Age >= 18 && user.Status != "active" {
+			t.Fatalf(
+				"user %q should remain active, got %q",
+				user.Name,
+				user.Status,
+			)
+		}
 	}
 }
 
 func TestDatabaseFileDelete(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
 
 	db := New(baseDir)
 
-	users, err := db.File(
-		filename,
-		password,
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	user := TestUser{
-		Name: "Budi",
-		Age:  20,
+	user := User{
+		Name:   "Budi",
+		Age:    20,
+		Status: "active",
 	}
 
-	if err := users.Insert(&user); err != nil {
+	if err := dbFile.Insert(&user); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := users.Delete(user.ID); err != nil {
+	if err := dbFile.Delete(user.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, exists := users.data[user.ID]; exists {
-		t.Fatal("expected user to be deleted")
-	}
+	var result User
 
-	var result TestUser
-
-	if err := users.Find(
+	err = dbFile.Find(
 		user.ID,
 		&result,
-	); err == nil {
-		t.Fatal("expected find to fail after delete")
+	)
+
+	if err == nil {
+		t.Fatal(
+			"expected error when finding deleted record",
+		)
+	}
+
+	t.Logf(
+		"deleted user %q",
+		user.ID,
+	)
+}
+
+func TestDatabaseFileFindAll(t *testing.T) {
+	baseDir := t.TempDir()
+
+	db := New(baseDir)
+
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := []User{
+		{
+			Name:   "Budi",
+			Age:    20,
+			Status: "active",
+		},
+		{
+			Name:   "Andi",
+			Age:    25,
+			Status: "active",
+		},
+		{
+			Name:   "Siti",
+			Age:    17,
+			Status: "active",
+		},
+	}
+
+	for i := range input {
+		if err := dbFile.Insert(&input[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var result []User
+
+	if err := dbFile.FindAll(&result); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != len(input) {
+		t.Fatalf(
+			"expected %d records, got %d",
+			len(input),
+			len(result),
+		)
+	}
+
+	t.Logf(
+		"FindAll returned %d records",
+		len(result),
+	)
+
+	for _, user := range result {
+		t.Logf(
+			"record: %+v",
+			user,
+		)
 	}
 }
 
-func TestDatabaseFilePersistence(t *testing.T) {
+func TestDatabaseFileFindWhere(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
-	password := "password"
-
-	createTestDatabase(
-		t,
-		baseDir,
-		filename,
-		password,
-	)
 
 	db := New(baseDir)
 
-	users, err := db.File(
-		filename,
-		password,
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	user := TestUser{
-		Name: "Budi",
-		Age:  20,
+	input := []User{
+		{
+			Name:   "Budi",
+			Age:    20,
+			Status: "active",
+		},
+		{
+			Name:   "Andi",
+			Age:    25,
+			Status: "active",
+		},
+		{
+			Name:   "Siti",
+			Age:    17,
+			Status: "active",
+		},
 	}
 
-	if err := users.Insert(&user); err != nil {
-		t.Fatal(err)
+	for i := range input {
+		if err := dbFile.Insert(&input[i]); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Open the same database again to verify
-	// that the record was persisted to disk.
-	users, err = db.File(
-		filename,
-		password,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	var result []User
 
-	var result TestUser
-
-	if err := users.Find(
-		user.ID,
+	err = dbFile.FindWhere(
 		&result,
-	); err != nil {
+		func(data map[string]any) bool {
+			age, ok := data["age"].(float64)
+
+			return ok && age >= 18
+		},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if result.ID != user.ID {
+	if len(result) != 2 {
 		t.Fatalf(
-			"expected ID %q, got %q",
-			user.ID,
-			result.ID,
+			"expected 2 records, got %d",
+			len(result),
 		)
 	}
 
-	if result.Name != "Budi" {
-		t.Fatalf(
-			"expected name %q, got %q",
-			"Budi",
-			result.Name,
-		)
-	}
+	t.Logf(
+		"FindWhere returned %d records",
+		len(result),
+	)
 
-	if result.Age != 20 {
-		t.Fatalf(
-			"expected age %d, got %d",
-			20,
-			result.Age,
+	for _, user := range result {
+		t.Logf(
+			"matched record: %+v",
+			user,
 		)
 	}
 }
 
 func TestDatabaseFileWrongPassword(t *testing.T) {
 	baseDir := t.TempDir()
-	filename := "users.json"
 
-	createTestDatabase(
+	filename := "users.tacenva"
+
+	createTestDatabaseWithRecord(
 		t,
 		baseDir,
 		filename,
@@ -629,6 +631,230 @@ func TestDatabaseFileWrongPassword(t *testing.T) {
 	)
 
 	if err == nil {
-		t.Fatal("expected error when using wrong password")
+		t.Fatal(
+			"expected error when using wrong password",
+		)
 	}
+
+	t.Logf(
+		"wrong password correctly rejected: %v",
+		err,
+	)
+}
+
+func TestDatabaseFileCorrectPassword(t *testing.T) {
+	baseDir := t.TempDir()
+
+	filename := "users.tacenva"
+
+	createTestDatabaseWithRecord(
+		t,
+		baseDir,
+		filename,
+		"correct-password",
+	)
+
+	db := New(baseDir)
+
+	dbFile, err := db.File(
+		filename,
+		"correct-password",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var user User
+
+	if err := dbFile.Find(
+		"test-record",
+		&user,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if user.ID != "test-record" {
+		t.Fatalf(
+			"expected ID %q, got %q",
+			"test-record",
+			user.ID,
+		)
+	}
+
+	if user.Name != "Test" {
+		t.Fatalf(
+			"expected name %q, got %q",
+			"Test",
+			user.Name,
+		)
+	}
+
+	t.Logf(
+		"correct password opened database: %+v",
+		user,
+	)
+}
+
+func TestDatabaseFileStorage(t *testing.T) {
+	baseDir := t.TempDir()
+
+	db := New(baseDir)
+
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users.tacenva",
+		"secret",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	users := []User{
+		{
+			Name:   "Budi",
+			Age:    20,
+			Status: "active",
+		},
+		{
+			Name:   "Andi",
+			Age:    25,
+			Status: "active",
+		},
+		{
+			Name:   "Siti",
+			Age:    17,
+			Status: "active",
+		},
+	}
+
+	for i := range users {
+		if err := dbFile.Insert(&users[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path := filepath.Join(
+		baseDir,
+		"users.tacenva",
+	)
+
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var file structure.File
+
+	if err := json.Unmarshal(
+		blob,
+		&file,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(file.Records) != 3 {
+		t.Fatalf(
+			"expected 3 encrypted records, got %d",
+			len(file.Records),
+		)
+	}
+
+	t.Log("")
+	t.Log("========== TACENVA FILE ==========")
+	t.Logf("path: %s", path)
+	t.Logf("version: %d", file.Version)
+	t.Logf("kdf: %s", file.Algorithm.KDF)
+	t.Logf("cipher: %s", file.Algorithm.Cipher)
+	t.Logf(
+		"kdf params: memory=%d, iterations=%d, parallelism=%d",
+		file.KDF.Memory,
+		file.KDF.Iterations,
+		file.KDF.Parallelism,
+	)
+	t.Logf(
+		"salt: %x",
+		file.KDF.Salt,
+	)
+	t.Logf(
+		"records: %d",
+		len(file.Records),
+	)
+
+	for i, record := range file.Records {
+		t.Logf(
+			"record[%d].id: %s",
+			i,
+			record.ID,
+		)
+		t.Logf(
+			"record[%d].data: %s",
+			i,
+			record.Data,
+		)
+	}
+
+	t.Log("")
+	t.Log("========== RAW FILE ==========")
+	t.Log(string(blob))
+	t.Log("================================")
+	t.Log("")
+}
+
+func TestDatabaseFileExtension(t *testing.T) {
+	baseDir := t.TempDir()
+
+	db := New(baseDir)
+
+	dbFile, err := createAndOpenTestDatabase(
+		t,
+		db,
+		baseDir,
+		"users",
+		"secret",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user := User{
+		Name:   "Budi",
+		Age:    20,
+		Status: "active",
+	}
+
+	if err := dbFile.Insert(&user); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedPath := filepath.Join(
+		baseDir,
+		"users.tacenva",
+	)
+
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Fatalf(
+			"expected file %s to exist: %v",
+			expectedPath,
+			err,
+		)
+	}
+
+	unexpectedPath := filepath.Join(
+		baseDir,
+		"users",
+	)
+
+	if _, err := os.Stat(unexpectedPath); err == nil {
+		t.Fatalf(
+			"unexpected file without extension exists: %s",
+			unexpectedPath,
+		)
+	}
+
+	t.Logf(
+		"database stored at: %s",
+		expectedPath,
+	)
 }

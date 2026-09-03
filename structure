@@ -1,0 +1,5 @@
+tacenva/local/config.toml
+tacenva/local/keypair.tacenva
+tacenva/source-of-trurth/vault/*.tacenva
+tacenva/source-of-trurth/tacenva.db
+tacenva/replicas/{node_ulid}/vault/*.tacenva (node_ulid berdasarkan generate, bukan harus sama)
