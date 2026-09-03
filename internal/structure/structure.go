@@ -1,7 +1,6 @@
 package structure
 
 type File struct {
-	Version   uint              `json:"version"`
 	Algorithm Algorithm         `json:"algorithm"`
 	KDF       KDFParams         `json:"kdf"`
 	Records   []EncryptedRecord `json:"records"`

@@ -27,7 +27,6 @@ func createTestDatabase(
 	t.Helper()
 
 	file := structure.File{
-		Version: 1,
 		Algorithm: structure.Algorithm{
 			KDF:    "argon2id",
 			Cipher: "aes-256-gcm",
@@ -123,7 +122,6 @@ func createTestDatabaseWithRecord(
 	}
 
 	file := structure.File{
-		Version: 1,
 		Algorithm: structure.Algorithm{
 			KDF:    "argon2id",
 			Cipher: "aes-256-gcm",
@@ -149,6 +147,13 @@ func createTestDatabaseWithRecord(
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(
+		filename,
+		".tacenva",
+	) {
+		filename += ".tacenva"
 	}
 
 	path := filepath.Join(
@@ -266,6 +271,14 @@ func TestDatabaseFileInsert(t *testing.T) {
 			result.Age,
 		)
 	}
+
+	if result.Status != user.Status {
+		t.Fatalf(
+			"expected status %q, got %q",
+			user.Status,
+			result.Status,
+		)
+	}
 }
 
 func TestDatabaseFileUpdate(t *testing.T) {
@@ -297,12 +310,22 @@ func TestDatabaseFileUpdate(t *testing.T) {
 	user.Name = "Budi Santoso"
 	user.Age = 21
 
-	if err := dbFile.Update(
+	updated, err := dbFile.Update(
 		user.ID,
 		&user,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	if updated == nil {
+		t.Fatal("expected updated record")
+	}
+
+	t.Logf(
+		"updated record: %+v",
+		updated,
+	)
 
 	var result User
 
@@ -311,6 +334,14 @@ func TestDatabaseFileUpdate(t *testing.T) {
 		&result,
 	); err != nil {
 		t.Fatal(err)
+	}
+
+	if result.ID != user.ID {
+		t.Fatalf(
+			"expected ID %q, got %q",
+			user.ID,
+			result.ID,
+		)
 	}
 
 	if result.Name != "Budi Santoso" {
@@ -329,10 +360,13 @@ func TestDatabaseFileUpdate(t *testing.T) {
 		)
 	}
 
-	t.Logf(
-		"updated user: %+v",
-		result,
-	)
+	if result.Status != "active" {
+		t.Fatalf(
+			"expected status %q, got %q",
+			"active",
+			result.Status,
+		)
+	}
 }
 
 func TestDatabaseFileUpdateWhere(t *testing.T) {
@@ -397,6 +431,13 @@ func TestDatabaseFileUpdateWhere(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if len(result) != 3 {
+		t.Fatalf(
+			"expected 3 records, got %d",
+			len(result),
+		)
+	}
+
 	for _, user := range result {
 		t.Logf(
 			"user: %+v",
@@ -447,9 +488,44 @@ func TestDatabaseFileDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := dbFile.Delete(user.ID); err != nil {
+	deleted, err := dbFile.Delete(user.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	if len(deleted) == 0 {
+		t.Fatal("expected deleted record data")
+	}
+
+	var deletedUser User
+
+	if err := json.Unmarshal(
+		deleted,
+		&deletedUser,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if deletedUser.ID != user.ID {
+		t.Fatalf(
+			"expected deleted ID %q, got %q",
+			user.ID,
+			deletedUser.ID,
+		)
+	}
+
+	if deletedUser.Name != user.Name {
+		t.Fatalf(
+			"expected deleted name %q, got %q",
+			user.Name,
+			deletedUser.Name,
+		)
+	}
+
+	t.Logf(
+		"deleted user: %+v",
+		deletedUser,
+	)
 
 	var result User
 
@@ -463,11 +539,6 @@ func TestDatabaseFileDelete(t *testing.T) {
 			"expected error when finding deleted record",
 		)
 	}
-
-	t.Logf(
-		"deleted user %q",
-		user.ID,
-	)
 }
 
 func TestDatabaseFileFindAll(t *testing.T) {
@@ -608,6 +679,13 @@ func TestDatabaseFileFindWhere(t *testing.T) {
 			"matched record: %+v",
 			user,
 		)
+
+		if user.Age < 18 {
+			t.Fatalf(
+				"user %q should not be included",
+				user.Name,
+			)
+		}
 	}
 }
 
@@ -689,6 +767,22 @@ func TestDatabaseFileCorrectPassword(t *testing.T) {
 		)
 	}
 
+	if user.Age != 20 {
+		t.Fatalf(
+			"expected age %d, got %d",
+			20,
+			user.Age,
+		)
+	}
+
+	if user.Status != "active" {
+		t.Fatalf(
+			"expected status %q, got %q",
+			"active",
+			user.Status,
+		)
+	}
+
 	t.Logf(
 		"correct password opened database: %+v",
 		user,
@@ -764,7 +858,6 @@ func TestDatabaseFileStorage(t *testing.T) {
 	t.Log("")
 	t.Log("========== TACENVA FILE ==========")
 	t.Logf("path: %s", path)
-	t.Logf("version: %d", file.Version)
 	t.Logf("kdf: %s", file.Algorithm.KDF)
 	t.Logf("cipher: %s", file.Algorithm.Cipher)
 	t.Logf(

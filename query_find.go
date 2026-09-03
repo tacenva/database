@@ -25,6 +25,9 @@ func (f *DatabaseFile) Find(
 	id string,
 	dest any,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if id == "" {
 		return errors.New("id cannot be empty")
 	}
@@ -67,6 +70,9 @@ func (f *DatabaseFile) Find(
 func (f *DatabaseFile) FindAll(
 	dest any,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	v, err := validateSliceDestination(dest)
 	if err != nil {
 		return err
@@ -123,6 +129,9 @@ func (f *DatabaseFile) FindWhere(
 	dest any,
 	predicate func(map[string]any) bool,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if predicate == nil {
 		return errors.New("predicate cannot be nil")
 	}

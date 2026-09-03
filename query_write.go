@@ -60,40 +60,53 @@ func (f *DatabaseFile) Insert(value any) error {
 // The value must be a non-nil pointer to a struct.
 // The ID field of value will be replaced with the given ID.
 //
+// Update locks the database file while the record is being
+// modified and persisted.
+//
+// The updated value is returned after a successful update.
+//
 // Example:
 //
 //	user.Name = "Budi Santoso"
 //
-//	err := users.Update(
+//	updated, err := users.Update(
 //		user.ID,
 //		&user,
 //	)
+//	if err != nil {
+//		return err
+//	}
+//
+//	fmt.Println(updated)
 func (f *DatabaseFile) Update(
 	id string,
 	value any,
-) error {
+) (any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if id == "" {
-		return errors.New("id cannot be empty")
+		return nil, errors.New("id cannot be empty")
 	}
 
 	if err := validateValue(value); err != nil {
-		return err
+		return nil, err
 	}
 
 	if _, exists := f.data[id]; !exists {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"record %q not found",
 			id,
 		)
 	}
 
 	if err := setID(value, id); err != nil {
-		return err
+		return nil, err
 	}
 
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	old := f.data[id]
@@ -103,10 +116,10 @@ func (f *DatabaseFile) Update(
 	if err := f.save(); err != nil {
 		f.data[id] = old
 
-		return err
+		return nil, err
 	}
 
-	return nil
+	return value, nil
 }
 
 // UpdateWhere updates all records that match the predicate.
@@ -136,6 +149,9 @@ func (f *DatabaseFile) UpdateWhere(
 	predicate func(map[string]any) bool,
 	updater func(map[string]any) error,
 ) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if predicate == nil {
 		return errors.New("predicate cannot be nil")
 	}
@@ -157,21 +173,29 @@ func (f *DatabaseFile) UpdateWhere(
 			continue
 		}
 
+		// Save the original before calling updater.
+		// This makes rollback reliable if updater or marshal fails.
+		if _, exists := original[id]; !exists {
+			original[id] = raw
+		}
+
 		if err := updater(data); err != nil {
-			f.data = originalData(original, f.data)
+			f.data = originalData(
+				original,
+				f.data,
+			)
 
 			return err
 		}
 
 		updated, err := json.Marshal(data)
 		if err != nil {
-			f.data = originalData(original, f.data)
+			f.data = originalData(
+				original,
+				f.data,
+			)
 
 			return err
-		}
-
-		if _, exists := original[id]; !exists {
-			original[id] = raw
 		}
 
 		f.data[id] = updated
@@ -182,7 +206,10 @@ func (f *DatabaseFile) UpdateWhere(
 	}
 
 	if err := f.save(); err != nil {
-		f.data = originalData(original, f.data)
+		f.data = originalData(
+			original,
+			f.data,
+		)
 
 		return err
 	}
@@ -192,17 +219,32 @@ func (f *DatabaseFile) UpdateWhere(
 
 // Delete deletes a single record by its ID.
 //
+// Delete locks the database file while the record is being
+// removed and persisted.
+//
+// The deleted record is returned after a successful delete.
+//
 // Example:
 //
-//	err := users.Delete(user.ID)
-func (f *DatabaseFile) Delete(id string) error {
+//	deleted, err := users.Delete(user.ID)
+//	if err != nil {
+//		return err
+//	}
+//
+//	fmt.Println(deleted)
+func (f *DatabaseFile) Delete(
+	id string,
+) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if id == "" {
-		return errors.New("id cannot be empty")
+		return nil, errors.New("id cannot be empty")
 	}
 
 	old, exists := f.data[id]
 	if !exists {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"record %q not found",
 			id,
 		)
@@ -213,10 +255,10 @@ func (f *DatabaseFile) Delete(id string) error {
 	if err := f.save(); err != nil {
 		f.data[id] = old
 
-		return err
+		return nil, err
 	}
 
-	return nil
+	return old, nil
 }
 
 func originalData(

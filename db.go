@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"sync"
 
 	"github.com/tacenva/database/internal/crypto"
 	"github.com/tacenva/database/internal/storage"
@@ -19,6 +20,8 @@ type DatabaseFile struct {
 	file     structure.File
 	data     map[string]json.RawMessage
 	key      []byte
+
+	mu sync.RWMutex
 }
 
 func New(baseDir string) *DB {
