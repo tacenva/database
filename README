@@ -1,0 +1,148 @@
+# Tacenva
+
+Tacenva is a lightweight encrypted database engine for Go.
+
+It stores data in `.tacenva` files and encrypts each record using AES-256-GCM with keys derived from passwords using Argon2id.
+
+## Features
+
+* AES-256-GCM encryption
+* Argon2id key derivation
+* Per-record encryption
+* ULID-based record IDs
+* JSON-based storage
+* CRUD operations
+* `Find`, `FindAll`, and `FindWhere`
+* `UpdateWhere` for updating multiple records
+* Automatic `.tacenva` file extension
+* Concurrent write protection
+
+## Installation
+
+```bash
+go get github.com/tacenva/database
+```
+
+## Usage
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/tacenva/database"
+)
+
+type User struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+func main() {
+	db := database.New("./data")
+
+	file, err := db.File("users", "my-password")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Insert
+	user := User{
+		Name:  "John Doe",
+		Email: "john@example.com",
+	}
+
+	if err := file.Insert(&user); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("ID:", user.ID)
+
+	// Find
+	var result User
+
+	if err := file.Find(user.ID, &result); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("%+v\n", result)
+
+	// Update
+	user.Name = "John Updated"
+
+	if _, err := file.Update(user.ID, &user); err != nil {
+		log.Fatal(err)
+	}
+
+	// Delete
+	if _, err := file.Delete(user.ID); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+The database file will be stored as:
+
+```text
+data/
+└── users.tacenva
+```
+
+## Query
+
+Find all records:
+
+```go
+var users []User
+
+err := file.FindAll(&users)
+```
+
+Find records using a predicate:
+
+```go
+var users []User
+
+err := file.FindWhere(&users, func(data map[string]any) bool {
+	return data["name"] == "John Doe"
+})
+```
+
+Update multiple records:
+
+```go
+err := file.UpdateWhere(
+	func(data map[string]any) bool {
+		return data["name"] == "John Doe"
+	},
+	func(data map[string]any) error {
+		data["name"] = "John Updated"
+		return nil
+	},
+)
+```
+
+## Encryption
+
+Tacenva uses:
+
+* **KDF:** Argon2id
+* **Cipher:** AES-256-GCM
+* **Nonce:** Random nonce per encryption
+
+Encrypted records are stored as Base64-encoded ciphertext inside the `.tacenva` file.
+
+## Testing
+
+```bash
+go test ./...
+```
+
+Run with the race detector:
+
+```bash
+go test -race ./...
+```
