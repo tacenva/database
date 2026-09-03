@@ -1,7 +1,9 @@
 package database
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"os"
 	"sync"
 
 	"github.com/tacenva/database/internal/crypto"
@@ -31,14 +33,46 @@ func New(baseDir string) *DB {
 	}
 }
 
-// File opens an encrypted Tacenva database file using the provided password.
 func (db *DB) File(
 	filename string,
 	password string,
 ) (*DatabaseFile, error) {
 	blob, err := db.fileStore.Read(filename)
+
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		salt := make([]byte, 16)
+
+		if _, err := rand.Read(salt); err != nil {
+			return nil, err
+		}
+
+		file := structure.File{
+			Algorithm: structure.Algorithm{
+				KDF:    "argon2id",
+				Cipher: "aes-256-gcm",
+			},
+			KDF: structure.KDFParams{
+				Salt:        salt,
+				Memory:      64 * 1024,
+				Iterations:  3,
+				Parallelism: 2,
+			},
+			Records: []structure.EncryptedRecord{},
+		}
+
+		key := db.crypto.DeriveKey(password, salt)
+
+		return &DatabaseFile{
+			db:       db,
+			filename: filename,
+			file:     file,
+			data:     make(map[string]json.RawMessage),
+			key:      key,
+		}, nil
 	}
 
 	var file structure.File

@@ -310,22 +310,9 @@ func TestDatabaseFileUpdate(t *testing.T) {
 	user.Name = "Budi Santoso"
 	user.Age = 21
 
-	updated, err := dbFile.Update(
-		user.ID,
-		&user,
-	)
-	if err != nil {
+	if err := dbFile.Update(&user); err != nil {
 		t.Fatal(err)
 	}
-
-	if updated == nil {
-		t.Fatal("expected updated record")
-	}
-
-	t.Logf(
-		"updated record: %+v",
-		updated,
-	)
 
 	var result User
 

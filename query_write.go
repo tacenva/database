@@ -78,35 +78,36 @@ func (f *DatabaseFile) Insert(value any) error {
 //	}
 //
 //	fmt.Println(updated)
-func (f *DatabaseFile) Update(
-	id string,
-	value any,
-) (any, error) {
+func (f *DatabaseFile) Update(value any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if id == "" {
-		return nil, errors.New("id cannot be empty")
+	if err := validateValue(value); err != nil {
+		return err
 	}
 
-	if err := validateValue(value); err != nil {
-		return nil, err
+	v := reflect.ValueOf(value)
+
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	id := v.FieldByName("ID").String()
+
+	if id == "" {
+		return errors.New("id cannot be empty")
 	}
 
 	if _, exists := f.data[id]; !exists {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"record %q not found",
 			id,
 		)
 	}
 
-	if err := setID(value, id); err != nil {
-		return nil, err
-	}
-
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	old := f.data[id]
@@ -115,11 +116,10 @@ func (f *DatabaseFile) Update(
 
 	if err := f.save(); err != nil {
 		f.data[id] = old
-
-		return nil, err
+		return err
 	}
 
-	return value, nil
+	return nil
 }
 
 // UpdateWhere updates all records that match the predicate.
