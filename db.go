@@ -3,12 +3,19 @@ package database
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 
 	"github.com/tacenva/database/internal/crypto"
 	"github.com/tacenva/database/internal/storage"
 	"github.com/tacenva/database/internal/structure"
+)
+
+const passwordVerifier = "tacenva-password-verifier"
+
+var (
+	ErrInvalidPassword = errors.New("invalid password")
 )
 
 type DB struct {
@@ -64,15 +71,34 @@ func (db *DB) File(
 			Records: []structure.EncryptedRecord{},
 		}
 
-		key := db.crypto.DeriveKey(password, salt)
+		key := db.crypto.DeriveKey(
+			password,
+			salt,
+		)
 
-		return &DatabaseFile{
+		verifier, err := db.crypto.Encrypt(
+			[]byte(passwordVerifier),
+			key,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		file.Verifier = verifier
+
+		dbFile := &DatabaseFile{
 			db:       db,
 			filename: filename,
 			file:     file,
 			data:     make(map[string]json.RawMessage),
 			key:      key,
-		}, nil
+		}
+
+		if err := dbFile.save(); err != nil {
+			return nil, err
+		}
+
+		return dbFile, nil
 	}
 
 	var file structure.File
@@ -85,6 +111,19 @@ func (db *DB) File(
 		password,
 		file.KDF.Salt,
 	)
+
+	// Verify password before opening records.
+	verified, err := db.crypto.Decrypt(
+		file.Verifier,
+		key,
+	)
+	if err != nil {
+		return nil, ErrInvalidPassword
+	}
+
+	if string(verified) != passwordVerifier {
+		return nil, ErrInvalidPassword
+	}
 
 	data := make(map[string]json.RawMessage)
 
@@ -110,7 +149,11 @@ func (db *DB) File(
 }
 
 func (f *DatabaseFile) save() error {
-	records := make([]structure.EncryptedRecord, 0, len(f.data))
+	records := make(
+		[]structure.EncryptedRecord,
+		0,
+		len(f.data),
+	)
 
 	for id, raw := range f.data {
 		encrypted, err := f.db.crypto.Encrypt(
@@ -121,10 +164,13 @@ func (f *DatabaseFile) save() error {
 			return err
 		}
 
-		records = append(records, structure.EncryptedRecord{
-			ID:   id,
-			Data: encrypted,
-		})
+		records = append(
+			records,
+			structure.EncryptedRecord{
+				ID:   id,
+				Data: encrypted,
+			},
+		)
 	}
 
 	f.file.Records = records
@@ -142,4 +188,11 @@ func (f *DatabaseFile) save() error {
 		f.filename,
 		blob,
 	)
+}
+
+func (f *DatabaseFile) Count() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	return len(f.data)
 }

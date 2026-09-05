@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -18,72 +19,6 @@ type User struct {
 	Status string `json:"status"`
 }
 
-func createTestDatabase(
-	t *testing.T,
-	baseDir string,
-	filename string,
-	password string,
-) {
-	t.Helper()
-
-	file := structure.File{
-		Algorithm: structure.Algorithm{
-			KDF:    "argon2id",
-			Cipher: "aes-256-gcm",
-		},
-		KDF: structure.KDFParams{
-			Salt:        []byte("test-salt-123456"),
-			Memory:      64 * 1024,
-			Iterations:  3,
-			Parallelism: 2,
-		},
-		Records: []structure.EncryptedRecord{},
-	}
-
-	_ = password
-
-	blob, err := json.MarshalIndent(
-		file,
-		"",
-		"  ",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.HasSuffix(
-		filename,
-		".tacenva",
-	) {
-		filename += ".tacenva"
-	}
-
-	path := filepath.Join(
-		baseDir,
-		filename,
-	)
-
-	if err := os.MkdirAll(
-		filepath.Dir(path),
-		0700,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(
-		path,
-		blob,
-		0600,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf(
-		"created database: %s",
-		path,
-	)
-}
-
 func createTestDatabaseWithRecord(
 	t *testing.T,
 	baseDir string,
@@ -94,7 +29,11 @@ func createTestDatabaseWithRecord(
 
 	cryptoService := crypto.NewCrypto()
 
-	salt := []byte("test-salt-123456")
+	salt := make([]byte, 16)
+
+	if _, err := rand.Read(salt); err != nil {
+		t.Fatal(err)
+	}
 
 	key := cryptoService.DeriveKey(
 		password,
@@ -182,25 +121,39 @@ func createTestDatabaseWithRecord(
 	)
 }
 
-func createAndOpenTestDatabase(
-	t *testing.T,
-	db *DB,
-	baseDir string,
-	filename string,
-	password string,
-) (*DatabaseFile, error) {
-	t.Helper()
+func TestDatabaseFileCreate(t *testing.T) {
+	baseDir := t.TempDir()
 
-	createTestDatabase(
-		t,
+	db := New(baseDir)
+
+	dbFile, err := db.File(
+		"users",
+		"secret",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dbFile == nil {
+		t.Fatal("expected database file, got nil")
+	}
+
+	expectedPath := filepath.Join(
 		baseDir,
-		filename,
-		password,
+		"users.tacenva",
 	)
 
-	return db.File(
-		filename,
-		password,
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Fatalf(
+			"expected file %s to exist: %v",
+			expectedPath,
+			err,
+		)
+	}
+
+	t.Logf(
+		"created database: %s",
+		expectedPath,
 	)
 }
 
@@ -209,11 +162,8 @@ func TestDatabaseFileInsert(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -286,11 +236,8 @@ func TestDatabaseFileUpdate(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -361,11 +308,8 @@ func TestDatabaseFileUpdateWhere(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -454,11 +398,8 @@ func TestDatabaseFileDelete(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -533,11 +474,8 @@ func TestDatabaseFileFindAll(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -600,11 +538,8 @@ func TestDatabaseFileFindWhere(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -781,11 +716,8 @@ func TestDatabaseFileStorage(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
-		"users.tacenva",
+	dbFile, err := db.File(
+		"users",
 		"secret",
 	)
 	if err != nil {
@@ -887,24 +819,11 @@ func TestDatabaseFileExtension(t *testing.T) {
 
 	db := New(baseDir)
 
-	dbFile, err := createAndOpenTestDatabase(
-		t,
-		db,
-		baseDir,
+	_, err := db.File(
 		"users",
 		"secret",
 	)
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	user := User{
-		Name:   "Budi",
-		Age:    20,
-		Status: "active",
-	}
-
-	if err := dbFile.Insert(&user); err != nil {
 		t.Fatal(err)
 	}
 

@@ -3,6 +3,7 @@ package structure
 type File struct {
 	Algorithm Algorithm         `json:"algorithm"`
 	KDF       KDFParams         `json:"kdf"`
+	Verifier  string            `json:"verifier"`
 	Records   []EncryptedRecord `json:"records"`
 }
 

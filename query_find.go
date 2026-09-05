@@ -48,6 +48,10 @@ func (f *DatabaseFile) Find(
 		return err
 	}
 
+	if err := setDestinationID(dest, id); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -80,10 +84,14 @@ func (f *DatabaseFile) FindAll(
 
 	slice := v.Elem()
 
-	for _, raw := range f.data {
+	for id, raw := range f.data {
 		item := reflect.New(slice.Type().Elem())
 
 		if err := json.Unmarshal(raw, item.Interface()); err != nil {
+			return err
+		}
+
+		if err := setDestinationID(item.Interface(), id); err != nil {
 			return err
 		}
 
@@ -143,7 +151,7 @@ func (f *DatabaseFile) FindWhere(
 
 	slice := v.Elem()
 
-	for _, raw := range f.data {
+	for id, raw := range f.data {
 		var data map[string]any
 
 		if err := json.Unmarshal(raw, &data); err != nil {
@@ -157,6 +165,10 @@ func (f *DatabaseFile) FindWhere(
 		item := reflect.New(slice.Type().Elem())
 
 		if err := json.Unmarshal(raw, item.Interface()); err != nil {
+			return err
+		}
+
+		if err := setDestinationID(item.Interface(), id); err != nil {
 			return err
 		}
 
@@ -227,4 +239,60 @@ func validateSliceDestination(dest any) (reflect.Value, error) {
 	}
 
 	return v, nil
+}
+
+// setDestinationID sets the record ID from the database map key.
+//
+// The ID is stored separately from the JSON data, so this restores
+// the ID after the record has been decoded from JSON.
+//
+// The destination must be a non-nil pointer to a struct
+// containing a settable string field named ID.
+func setDestinationID(
+	dest any,
+	id string,
+) error {
+	if id == "" {
+		return errors.New("id cannot be empty")
+	}
+
+	v := reflect.ValueOf(dest)
+
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return errors.New(
+			"destination must be a non-nil pointer",
+		)
+	}
+
+	v = v.Elem()
+
+	if v.Kind() != reflect.Struct {
+		return errors.New(
+			"destination must point to a struct",
+		)
+	}
+
+	field := v.FieldByName("ID")
+
+	if !field.IsValid() {
+		return errors.New(
+			"destination must contain an ID field",
+		)
+	}
+
+	if !field.CanSet() {
+		return errors.New(
+			"ID field cannot be set",
+		)
+	}
+
+	if field.Kind() != reflect.String {
+		return errors.New(
+			"ID field must be a string",
+		)
+	}
+
+	field.SetString(id)
+
+	return nil
 }
