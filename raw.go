@@ -8,16 +8,10 @@ import (
 	"sync"
 
 	"github.com/oklog/ulid/v2"
-
-	"github.com/tacenva/database/internal/storage"
 )
 
-type RawDB struct {
-	fileStore *storage.FileStore
-}
-
 type RawDatabaseFile struct {
-	db       *RawDB
+	db       *DB
 	filename string
 	data     map[string][]byte
 
@@ -33,15 +27,7 @@ type RawRecord struct {
 	Data []byte `json:"data"`
 }
 
-func NewRaw(
-	baseDir string,
-) *RawDB {
-	return &RawDB{
-		fileStore: storage.NewFileStore(baseDir),
-	}
-}
-
-func (db *RawDB) File(
+func (db *DB) RawFile(
 	filename string,
 ) (*RawDatabaseFile, error) {
 	if filename == "" {
@@ -199,6 +185,38 @@ func (f *RawDatabaseFile) FindAll() (
 	return result, nil
 }
 
+func (f *RawDatabaseFile) Delete(
+	id string,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if id == "" {
+		return errors.New(
+			"id cannot be empty",
+		)
+	}
+
+	old, exists := f.data[id]
+
+	if !exists {
+		return fmt.Errorf(
+			"record %q not found",
+			id,
+		)
+	}
+
+	delete(f.data, id)
+
+	if err := f.save(); err != nil {
+		f.data[id] = old
+
+		return err
+	}
+
+	return nil
+}
+
 func (f *RawDatabaseFile) save() error {
 	records := make(
 		[]RawRecord,
@@ -236,36 +254,4 @@ func (f *RawDatabaseFile) save() error {
 		f.filename,
 		blob,
 	)
-}
-
-func (f *RawDatabaseFile) Delete(
-	id string,
-) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if id == "" {
-		return errors.New(
-			"id cannot be empty",
-		)
-	}
-
-	old, exists := f.data[id]
-
-	if !exists {
-		return fmt.Errorf(
-			"record %q not found",
-			id,
-		)
-	}
-
-	delete(f.data, id)
-
-	if err := f.save(); err != nil {
-		f.data[id] = old
-
-		return err
-	}
-
-	return nil
 }

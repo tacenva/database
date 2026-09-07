@@ -196,3 +196,20 @@ func (f *DatabaseFile) Count() int {
 
 	return len(f.data)
 }
+
+func (db *DB) Encrypt(
+	data []byte,
+	key []byte,
+) (string, error) {
+	return db.crypto.Encrypt(data, key)
+}
+
+func (db *DB) Decrypt(
+	encrypted string,
+	key []byte,
+) ([]byte, error) {
+	return db.crypto.Decrypt(
+		encrypted,
+		key,
+	)
+}
