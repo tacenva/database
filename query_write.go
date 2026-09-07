@@ -28,20 +28,20 @@ import (
 //	}
 //
 //	fmt.Println(user.ID)
-func (f *DatabaseFile) Insert(value any) error {
+func (f *DatabaseFile) Insert(value any) (string, error) {
 	if err := validateValue(value); err != nil {
-		return err
+		return "", err
 	}
 
 	id := ulid.Make().String()
 
 	if err := setID(value, id); err != nil {
-		return err
+		return "", err
 	}
 
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	f.data[id] = raw
@@ -49,10 +49,10 @@ func (f *DatabaseFile) Insert(value any) error {
 	if err := f.save(); err != nil {
 		delete(f.data, id)
 
-		return err
+		return "", err
 	}
 
-	return nil
+	return id, nil
 }
 
 // Update updates a single record by its ID.
@@ -339,4 +339,120 @@ func setID(
 	field.SetString(id)
 
 	return nil
+}
+
+// UpdateOrCreateBulk inserts or updates multiple records in a single operation.
+//
+// Records with an empty ID will receive a new ULID.
+// Records with an existing ID will be updated if they already exist.
+// Records with a non-empty ID that do not exist will be created using
+// the provided ID.
+//
+// All records are persisted in a single save operation.
+// If encoding or saving fails, all changes are rolled back.
+func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if values == nil {
+		return errors.New("values cannot be nil")
+	}
+
+	v := reflect.ValueOf(values)
+
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return errors.New("values must be a slice or array")
+	}
+
+	original := make(map[string]json.RawMessage)
+
+	for i := 0; i < v.Len(); i++ {
+		value := v.Index(i)
+
+		if value.Kind() != reflect.Pointer || value.IsNil() {
+			return fmt.Errorf(
+				"value at index %d must be a non-nil pointer",
+				i,
+			)
+		}
+
+		if err := validateValue(value.Interface()); err != nil {
+			return fmt.Errorf(
+				"value at index %d: %w",
+				i,
+				err,
+			)
+		}
+
+		structValue := value.Elem()
+		idField := structValue.FieldByName("ID")
+
+		if !idField.IsValid() {
+			return fmt.Errorf(
+				"value at index %d: value must contain an ID field",
+				i,
+			)
+		}
+
+		if idField.Kind() != reflect.String {
+			return fmt.Errorf(
+				"value at index %d: ID field must be a string",
+				i,
+			)
+		}
+
+		id := idField.String()
+
+		if id == "" {
+			id = ulid.Make().String()
+			idField.SetString(id)
+		}
+
+		if _, exists := original[id]; !exists {
+			if old, exists := f.data[id]; exists {
+				original[id] = old
+			} else {
+				original[id] = nil
+			}
+		}
+
+		raw, err := json.Marshal(value.Interface())
+		if err != nil {
+			restoreData(f.data, original)
+
+			return fmt.Errorf(
+				"failed to marshal record %q: %w",
+				id,
+				err,
+			)
+		}
+
+		f.data[id] = raw
+	}
+
+	if len(original) == 0 {
+		return nil
+	}
+
+	if err := f.save(); err != nil {
+		restoreData(f.data, original)
+
+		return err
+	}
+
+	return nil
+}
+
+func restoreData(
+	data map[string]json.RawMessage,
+	original map[string]json.RawMessage,
+) {
+	for id, raw := range original {
+		if raw == nil {
+			delete(data, id)
+			continue
+		}
+
+		data[id] = raw
+	}
 }
