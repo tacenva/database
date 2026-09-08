@@ -33,10 +33,17 @@ func (f *DatabaseFile) Insert(value any) (string, error) {
 		return "", err
 	}
 
-	id := ulid.Make().String()
-
-	if err := setID(value, id); err != nil {
+	id, err := getID(value)
+	if err != nil {
 		return "", err
+	}
+
+	if id == "" {
+		id = ulid.Make().String()
+
+		if err := setID(value, id); err != nil {
+			return "", err
+		}
 	}
 
 	raw, err := json.Marshal(value)
@@ -294,6 +301,36 @@ func validateValue(value any) error {
 	}
 
 	return nil
+}
+
+func getID(value any) (string, error) {
+	v := reflect.ValueOf(value)
+
+	if v.Kind() != reflect.Ptr {
+		return "", fmt.Errorf("value must be a pointer")
+	}
+
+	if v.IsNil() {
+		return "", fmt.Errorf("value must not be nil")
+	}
+
+	v = v.Elem()
+
+	if v.Kind() != reflect.Struct {
+		return "", fmt.Errorf("value must be a struct pointer")
+	}
+
+	field := v.FieldByName("ID")
+
+	if !field.IsValid() {
+		return "", fmt.Errorf("value has no ID field")
+	}
+
+	if field.Kind() != reflect.String {
+		return "", fmt.Errorf("ID field must be a string")
+	}
+
+	return field.String(), nil
 }
 
 func setID(
