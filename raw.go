@@ -255,3 +255,68 @@ func (f *RawDatabaseFile) save() error {
 		blob,
 	)
 }
+
+// Sync synchronizes the raw database with the provided records.
+//
+// Records that exist in the source will be created or updated.
+// Records that exist in the database but are missing from the source
+// will be deleted.
+//
+// All records are persisted in a single save operation.
+// If saving fails, the entire database is rolled back.
+func (f *RawDatabaseFile) Sync(
+	values map[string][]byte,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if values == nil {
+		return errors.New(
+			"values cannot be nil",
+		)
+	}
+
+	// Keep the complete original state for rollback.
+	original := make(
+		map[string][]byte,
+		len(f.data),
+	)
+
+	for id, data := range f.data {
+		original[id] = data
+	}
+
+	// Build the new database state separately.
+	next := make(
+		map[string][]byte,
+		len(values),
+	)
+
+	for id, data := range values {
+		if id == "" {
+			return errors.New(
+				"id cannot be empty",
+			)
+		}
+
+		if len(data) == 0 {
+			return fmt.Errorf(
+				"data for record %q cannot be empty",
+				id,
+			)
+		}
+
+		next[id] = data
+	}
+
+	// Replace the current database with the synchronized state.
+	f.data = next
+
+	if err := f.save(); err != nil {
+		f.data = original
+
+		return err
+	}
+
+	return nil
+}
