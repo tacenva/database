@@ -493,3 +493,113 @@ func restoreData(
 		data[id] = raw
 	}
 }
+
+// Sync synchronizes the database with the provided records.
+//
+// Records that exist in the source will be created or updated.
+// Records that exist in the database but are missing from the source
+// will be deleted.
+//
+// Records with an empty ID will receive a new ULID.
+// Duplicate IDs are rejected.
+//
+// All records are persisted in a single save operation.
+// If encoding or saving fails, the entire database is rolled back.
+func (f *DatabaseFile) Sync(values any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if values == nil {
+		return errors.New("values cannot be nil")
+	}
+
+	v := reflect.ValueOf(values)
+
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return errors.New("values must be a slice or array")
+	}
+
+	// Keep the complete original state for rollback.
+	original := make(map[string]json.RawMessage, len(f.data))
+
+	for id, raw := range f.data {
+		original[id] = raw
+	}
+
+	// Build the new database state separately.
+	// This prevents the current database from being modified
+	// until all input records have been validated and encoded.
+	next := make(map[string]json.RawMessage, v.Len())
+
+	for i := 0; i < v.Len(); i++ {
+		value := v.Index(i)
+
+		if value.Kind() != reflect.Pointer || value.IsNil() {
+			return fmt.Errorf(
+				"value at index %d must be a non-nil pointer",
+				i,
+			)
+		}
+
+		if err := validateValue(value.Interface()); err != nil {
+			return fmt.Errorf(
+				"value at index %d: %w",
+				i,
+				err,
+			)
+		}
+
+		structValue := value.Elem()
+		idField := structValue.FieldByName("ID")
+
+		if !idField.IsValid() {
+			return fmt.Errorf(
+				"value at index %d: value must contain an ID field",
+				i,
+			)
+		}
+
+		if idField.Kind() != reflect.String {
+			return fmt.Errorf(
+				"value at index %d: ID field must be a string",
+				i,
+			)
+		}
+
+		id := idField.String()
+
+		if id == "" {
+			id = ulid.Make().String()
+			idField.SetString(id)
+		}
+
+		if _, exists := next[id]; exists {
+			return fmt.Errorf(
+				"duplicate record ID %q",
+				id,
+			)
+		}
+
+		raw, err := json.Marshal(value.Interface())
+		if err != nil {
+			return fmt.Errorf(
+				"failed to marshal record %q: %w",
+				id,
+				err,
+			)
+		}
+
+		next[id] = raw
+	}
+
+	// Replace the current database with the synchronized state.
+	f.data = next
+
+	if err := f.save(); err != nil {
+		f.data = original
+
+		return err
+	}
+
+	return nil
+}
