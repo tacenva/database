@@ -1,8 +1,7 @@
 package structure
 
-import "time"
-
 type File struct {
+	Version   uint64            `json:"version"`
 	Algorithm Algorithm         `json:"algorithm"`
 	KDF       KDFParams         `json:"kdf"`
 	Verifier  string            `json:"verifier"`
@@ -10,9 +9,8 @@ type File struct {
 }
 
 type EncryptedRecord struct {
-	ID        string    `json:"id"`
-	Data      string    `json:"data"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID   string `json:"id"`
+	Data string `json:"data"`
 }
 
 type Algorithm struct {
