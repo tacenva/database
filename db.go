@@ -42,6 +42,8 @@ type DatabaseFile struct {
 	key      []byte
 
 	mu sync.RWMutex
+
+	raw bool
 }
 
 func New(baseDir string) *DB {
