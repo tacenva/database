@@ -13,12 +13,14 @@ import (
 type RawDatabaseFile struct {
 	db       *DB
 	filename string
+	file     RawFile
 	data     map[string][]byte
 
 	mu sync.RWMutex
 }
 
 type RawFile struct {
+	Version uint64      `json:"version"`
 	Records []RawRecord `json:"records"`
 }
 
@@ -46,7 +48,10 @@ func (db *DB) RawFile(
 		return &RawDatabaseFile{
 			db:       db,
 			filename: filename,
-			data:     make(map[string][]byte),
+			file: RawFile{
+				Version: 1,
+			},
+			data: make(map[string][]byte),
 		}, nil
 	}
 
@@ -62,6 +67,11 @@ func (db *DB) RawFile(
 		)
 	}
 
+	// Legacy file without version.
+	if file.Version == 0 {
+		file.Version = 1
+	}
+
 	data := make(
 		map[string][]byte,
 		len(file.Records),
@@ -74,6 +84,7 @@ func (db *DB) RawFile(
 	return &RawDatabaseFile{
 		db:       db,
 		filename: filename,
+		file:     file,
 		data:     data,
 	}, nil
 }
@@ -94,8 +105,12 @@ func (f *RawDatabaseFile) Insert(
 
 	f.data[id] = data
 
+	oldVersion := f.file.Version
+	f.file.Version++
+
 	if err := f.save(); err != nil {
 		delete(f.data, id)
+		f.file.Version = oldVersion
 
 		return "", err
 	}
@@ -133,8 +148,12 @@ func (f *RawDatabaseFile) Update(
 
 	f.data[id] = data
 
+	oldVersion := f.file.Version
+	f.file.Version++
+
 	if err := f.save(); err != nil {
 		f.data[id] = old
+		f.file.Version = oldVersion
 
 		return err
 	}
@@ -185,6 +204,13 @@ func (f *RawDatabaseFile) FindAll() (
 	return result, nil
 }
 
+func (f *RawDatabaseFile) Version() uint64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	return f.file.Version
+}
+
 func (f *RawDatabaseFile) Delete(
 	id string,
 ) error {
@@ -208,8 +234,12 @@ func (f *RawDatabaseFile) Delete(
 
 	delete(f.data, id)
 
+	oldVersion := f.file.Version
+	f.file.Version++
+
 	if err := f.save(); err != nil {
 		f.data[id] = old
+		f.file.Version = oldVersion
 
 		return err
 	}
@@ -235,6 +265,7 @@ func (f *RawDatabaseFile) save() error {
 	}
 
 	file := RawFile{
+		Version: f.file.Version,
 		Records: records,
 	}
 
@@ -309,14 +340,46 @@ func (f *RawDatabaseFile) Sync(
 		next[id] = data
 	}
 
+	// No changes.
+	if rawDataEqual(f.data, next) {
+		return nil
+	}
+
 	// Replace the current database with the synchronized state.
 	f.data = next
 
+	oldVersion := f.file.Version
+	f.file.Version++
+
 	if err := f.save(); err != nil {
 		f.data = original
+		f.file.Version = oldVersion
 
 		return err
 	}
 
 	return nil
+}
+
+func rawDataEqual(
+	a map[string][]byte,
+	b map[string][]byte,
+) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for id, dataA := range a {
+		dataB, exists := b[id]
+
+		if !exists {
+			return false
+		}
+
+		if string(dataA) != string(dataB) {
+			return false
+		}
+	}
+
+	return true
 }

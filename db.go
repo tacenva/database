@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 
@@ -301,19 +302,38 @@ func (f *DatabaseFile) Count() int {
 	return len(f.data)
 }
 
-func (db *DB) Encrypt(
-	data []byte,
-	key []byte,
+// SimulateEncryption mengenkripsi data menggunakan key
+// milik DatabaseFile dan mengembalikan hasil encrypted
+// yang siap disimpan.
+func (f *DatabaseFile) SimulateEncryption(
+	data any,
 ) (string, error) {
-	return db.crypto.Encrypt(data, key)
-}
+	if data == nil {
+		return "", fmt.Errorf("data cannot be nil")
+	}
 
-func (db *DB) Decrypt(
-	encrypted string,
-	key []byte,
-) ([]byte, error) {
-	return db.crypto.Decrypt(
-		encrypted,
-		key,
+	if len(f.key) == 0 {
+		return "", fmt.Errorf("encryption key is not available")
+	}
+
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to marshal data: %w",
+			err,
+		)
+	}
+
+	encrypted, err := f.db.crypto.Encrypt(
+		raw,
+		f.key,
 	)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to encrypt data: %w",
+			err,
+		)
+	}
+
+	return encrypted, nil
 }
