@@ -40,6 +40,14 @@ func New(baseDir string) *DB {
 	}
 }
 
+func (db *DB) Delete(filename string) error {
+	return db.fileStore.Delete(filename)
+}
+
+func (db *DB) Rename(oldName string, newName string) error {
+	return db.fileStore.Rename(oldName, newName)
+}
+
 func (db *DB) File(
 	filename string,
 	password string,
