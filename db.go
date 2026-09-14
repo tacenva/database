@@ -339,3 +339,112 @@ func (f *DatabaseFile) SimulateEncryption(
 
 	return encrypted, nil
 }
+
+func (f *DatabaseFile) ChangePassword(
+	currentPassword string,
+	newPassword string,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if currentPassword == "" {
+		return ErrInvalidPassword
+	}
+
+	if newPassword == "" {
+		return errors.New("new password cannot be empty")
+	}
+
+	// Verify current password against the current key.
+	currentKey := f.db.crypto.DeriveKey(
+		currentPassword,
+		f.file.KDF.Salt,
+	)
+
+	verified, err := f.db.crypto.Decrypt(
+		f.file.Verifier,
+		currentKey,
+	)
+	if err != nil {
+		return ErrInvalidPassword
+	}
+
+	if string(verified) != passwordVerifier {
+		return ErrInvalidPassword
+	}
+
+	// Generate a new salt for the new password.
+	newSalt := make([]byte, 16)
+
+	if _, err := rand.Read(newSalt); err != nil {
+		return err
+	}
+
+	// Derive a completely new encryption key.
+	newKey := f.db.crypto.DeriveKey(
+		newPassword,
+		newSalt,
+	)
+
+	// Re-encrypt every record using the new key.
+	newRecords := make(
+		[]structure.EncryptedRecord,
+		0,
+		len(f.data),
+	)
+
+	for id, raw := range f.data {
+		encrypted, err := f.db.crypto.Encrypt(
+			raw,
+			newKey,
+		)
+		if err != nil {
+			return err
+		}
+
+		newRecords = append(
+			newRecords,
+			structure.EncryptedRecord{
+				ID:   id,
+				Data: encrypted,
+			},
+		)
+	}
+
+	// Create a new verifier using the new key.
+	newVerifier, err := f.db.crypto.Encrypt(
+		[]byte(passwordVerifier),
+		newKey,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Update file metadata.
+	f.file.KDF.Salt = newSalt
+	f.file.Verifier = newVerifier
+	f.file.Records = newRecords
+
+	// Persist using the new key.
+	blob, err := json.MarshalIndent(
+		f.file,
+		"",
+		"  ",
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := f.db.fileStore.Write(
+		f.filename,
+		blob,
+	); err != nil {
+		return err
+	}
+
+	// Only update the in-memory key after the new
+	// encrypted database has been successfully written.
+	f.key = newKey
+
+	return nil
+}
