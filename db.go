@@ -54,7 +54,11 @@ func New(baseDir string) *DB {
 }
 
 func (db *DB) Destroy(filename string) error {
-	return db.fileStore.Delete(filename)
+	err := db.fileStore.Delete(filename)
+	if err != nil && os.IsNotExist(err) {
+		return ErrFileNotFound
+	}
+	return err
 }
 
 func (db *DB) Rename(
