@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/tacenva/database/internal/structure"
 )
 
@@ -84,16 +85,14 @@ func (f *DatabaseFile) InsertRaw(
 		)
 	}
 
-	if id == "" {
-		return "", errors.New(
-			"id cannot be empty",
-		)
-	}
-
 	if len(data) == 0 {
 		return "", errors.New(
 			"data cannot be empty",
 		)
+	}
+
+	if id == "" {
+		id = ulid.Make().String()
 	}
 
 	if _, exists := f.data[id]; exists {
