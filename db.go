@@ -53,7 +53,7 @@ func New(baseDir string) *DB {
 	}
 }
 
-func (db *DB) Delete(filename string) error {
+func (db *DB) Destroy(filename string) error {
 	return db.fileStore.Delete(filename)
 }
 
