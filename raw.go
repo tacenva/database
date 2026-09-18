@@ -7,7 +7,6 @@ import (
 	"os"
 	"sync"
 
-	"github.com/oklog/ulid/v2"
 	"github.com/tacenva/database/internal/structure"
 )
 
@@ -73,6 +72,7 @@ func (db *DB) NewRawFile(
 }
 
 func (f *DatabaseFile) InsertRaw(
+	id string,
 	data []byte,
 ) (string, error) {
 	f.mu.Lock()
@@ -84,13 +84,24 @@ func (f *DatabaseFile) InsertRaw(
 		)
 	}
 
+	if id == "" {
+		return "", errors.New(
+			"id cannot be empty",
+		)
+	}
+
 	if len(data) == 0 {
 		return "", errors.New(
 			"data cannot be empty",
 		)
 	}
 
-	id := ulid.Make().String()
+	if _, exists := f.data[id]; exists {
+		return "", fmt.Errorf(
+			"record %q already exists",
+			id,
+		)
+	}
 
 	raw, err := json.Marshal(string(data))
 	if err != nil {
