@@ -73,30 +73,30 @@ func (db *DB) NewRawFile(
 }
 
 func (f *DatabaseFile) InsertRaw(
-	id string,
+	id *string,
 	data []byte,
-) (string, error) {
+) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if !f.raw {
-		return "", errors.New(
+		return errors.New(
 			"database file is not in raw mode",
 		)
 	}
 
 	if len(data) == 0 {
-		return "", errors.New(
+		return errors.New(
 			"data cannot be empty",
 		)
 	}
 
-	if id == "" {
-		id = ulid.Make().String()
+	if *id == "" {
+		*id = ulid.Make().String()
 	}
 
-	if _, exists := f.data[id]; exists {
-		return "", fmt.Errorf(
+	if _, exists := f.data[*id]; exists {
+		return fmt.Errorf(
 			"record %q already exists",
 			id,
 		)
@@ -104,25 +104,25 @@ func (f *DatabaseFile) InsertRaw(
 
 	raw, err := json.Marshal(string(data))
 	if err != nil {
-		return "", fmt.Errorf(
+		return fmt.Errorf(
 			"encode raw data: %w",
 			err,
 		)
 	}
 
-	f.data[id] = raw
+	f.data[*id] = raw
 
 	oldVersion := f.file.Version
 	f.file.Version++
 
 	if err := f.saveRaw(); err != nil {
-		delete(f.data, id)
+		delete(f.data, *id)
 		f.file.Version = oldVersion
 
-		return "", err
+		return err
 	}
 
-	return id, nil
+	return nil
 }
 
 func (f *DatabaseFile) UpdateRaw(
