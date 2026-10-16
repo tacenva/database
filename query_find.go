@@ -183,6 +183,40 @@ func (f *DatabaseFile) FindWhere(
 	return nil
 }
 
+func (f *DatabaseFile) FindFirstWhere(
+	dest any,
+	predicate func(map[string]any) bool,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if predicate == nil {
+		return errors.New("predicate cannot be nil")
+	}
+
+	for id, raw := range f.data {
+		var data map[string]any
+
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return err
+		}
+
+		if !predicate(data) {
+			continue
+		}
+
+		if err := json.Unmarshal(raw, dest); err != nil {
+			return err
+		}
+
+		if err := setDestinationID(dest, id); err != nil {
+			return err
+		}
+		return nil
+	}
+	return errors.New("Not Found")
+}
+
 // validateDestination validates that dest is a non-nil pointer
 // to a struct.
 func validateDestination(dest any) error {
