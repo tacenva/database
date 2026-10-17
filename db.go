@@ -77,6 +77,23 @@ func (db *DB) Read(
 	return db.fileStore.Read(filename)
 }
 
+func (db *DB) ReadMetadataOnly(
+	filename string,
+) ([]byte, error) {
+	blob, err := db.Read(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var file structure.File
+	if err := json.Unmarshal(blob, &file); err != nil {
+		return nil, err
+	}
+
+	file.Records = nil
+	return json.Marshal(file)
+}
+
 func (db *DB) Write(
 	filename string,
 	blob []byte,
