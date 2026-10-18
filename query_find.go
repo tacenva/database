@@ -3,8 +3,11 @@ package database
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
+)
+
+var (
+	RecordNotFound = errors.New("Record Not Found")
 )
 
 // Find finds a single record by its ID and decodes it into dest.
@@ -34,10 +37,7 @@ func (f *DatabaseFile) Find(
 
 	raw, exists := f.data[id]
 	if !exists {
-		return fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return RecordNotFound
 	}
 
 	if err := validateDestination(dest); err != nil {
@@ -214,7 +214,7 @@ func (f *DatabaseFile) FindFirstWhere(
 		}
 		return nil
 	}
-	return errors.New("Not Found")
+	return RecordNotFound
 }
 
 // validateDestination validates that dest is a non-nil pointer

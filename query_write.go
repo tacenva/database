@@ -80,10 +80,7 @@ func (f *DatabaseFile) Update(value any) error {
 	}
 
 	if _, exists := f.data[id]; !exists {
-		return fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return RecordNotFound
 	}
 
 	raw, err := json.Marshal(value)
@@ -202,10 +199,7 @@ func (f *DatabaseFile) Delete(
 
 	old, exists := f.data[id]
 	if !exists {
-		return nil, fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return nil, nil
 	}
 
 	oldVersion := f.file.Version
