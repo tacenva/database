@@ -153,10 +153,7 @@ func (f *DatabaseFile) UpdateRaw(
 	old, exists := f.data[id]
 
 	if !exists {
-		return fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return RecordNotFound
 	}
 
 	raw, err := json.Marshal(string(data))
@@ -203,10 +200,7 @@ func (f *DatabaseFile) FindRaw(
 	raw, exists := f.data[id]
 
 	if !exists {
-		return nil, fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return nil, RecordNotFound
 	}
 
 	var data string

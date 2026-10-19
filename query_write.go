@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -35,20 +36,29 @@ func (f *DatabaseFile) Insert(value any) (string, error) {
 		}
 	}
 
+	if err := setTimestamps(value, false); err != nil {
+		return "", err
+	}
+
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return "", err
 	}
 
-	f.data[id] = raw
-
 	oldVersion := f.file.Version
+	old, existed := f.data[id]
+
+	f.data[id] = raw
 	f.file.Version++
 
 	if err := f.save(); err != nil {
-		delete(f.data, id)
-		f.file.Version = oldVersion
+		if existed {
+			f.data[id] = old
+		} else {
+			delete(f.data, id)
+		}
 
+		f.file.Version = oldVersion
 		return "", err
 	}
 
@@ -68,19 +78,32 @@ func (f *DatabaseFile) Update(value any) error {
 	}
 
 	v := reflect.ValueOf(value)
-
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return errors.New("value must be a non-nil pointer")
 	}
 
-	id := v.FieldByName("ID").String()
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return errors.New("value must be a pointer to struct")
+	}
 
+	idField := v.FieldByName("ID")
+	if !idField.IsValid() || idField.Kind() != reflect.String {
+		return errors.New("value must contain a string ID field")
+	}
+
+	id := idField.String()
 	if id == "" {
 		return errors.New("id cannot be empty")
 	}
 
-	if _, exists := f.data[id]; !exists {
+	old, exists := f.data[id]
+	if !exists {
 		return RecordNotFound
+	}
+
+	if err := setTimestamps(value, true); err != nil {
+		return err
 	}
 
 	raw, err := json.Marshal(value)
@@ -88,7 +111,6 @@ func (f *DatabaseFile) Update(value any) error {
 		return err
 	}
 
-	old := f.data[id]
 	oldVersion := f.file.Version
 
 	f.data[id] = raw
@@ -97,7 +119,6 @@ func (f *DatabaseFile) Update(value any) error {
 	if err := f.save(); err != nil {
 		f.data[id] = old
 		f.file.Version = oldVersion
-
 		return err
 	}
 
@@ -142,21 +163,15 @@ func (f *DatabaseFile) UpdateWhere(
 		original[id] = raw
 
 		if err := updater(data); err != nil {
-			f.data = originalData(
-				original,
-				f.data,
-			)
-
+			restoreData(f.data, original)
 			return err
 		}
 
+		setMapTimestamps(data, true)
+
 		updated, err := json.Marshal(data)
 		if err != nil {
-			f.data = originalData(
-				original,
-				f.data,
-			)
-
+			restoreData(f.data, original)
 			return err
 		}
 
@@ -171,13 +186,8 @@ func (f *DatabaseFile) UpdateWhere(
 	f.file.Version++
 
 	if err := f.save(); err != nil {
-		f.data = originalData(
-			original,
-			f.data,
-		)
-
+		restoreData(f.data, original)
 		f.file.Version = oldVersion
-
 		return err
 	}
 
@@ -245,7 +255,8 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 	for i := 0; i < v.Len(); i++ {
 		value := v.Index(i)
 
-		if value.Kind() != reflect.Pointer || value.IsNil() {
+		if value.Kind() != reflect.Ptr || value.IsNil() {
+			restoreData(f.data, original)
 			return fmt.Errorf(
 				"value at index %d must be a non-nil pointer",
 				i,
@@ -253,24 +264,15 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 		}
 
 		if err := validateValue(value.Interface()); err != nil {
-			return fmt.Errorf(
-				"value at index %d: %w",
-				i,
-				err,
-			)
+			restoreData(f.data, original)
+			return fmt.Errorf("value at index %d: %w", i, err)
 		}
 
 		structValue := value.Elem()
 		idField := structValue.FieldByName("ID")
 
-		if !idField.IsValid() {
-			return fmt.Errorf(
-				"value at index %d: value must contain an ID field",
-				i,
-			)
-		}
-
-		if idField.Kind() != reflect.String {
+		if !idField.IsValid() || idField.Kind() != reflect.String {
+			restoreData(f.data, original)
 			return fmt.Errorf(
 				"value at index %d: ID field must be a string",
 				i,
@@ -292,10 +294,14 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 			}
 		}
 
+		if err := setTimestamps(value.Interface(), false); err != nil {
+			restoreData(f.data, original)
+			return err
+		}
+
 		raw, err := json.Marshal(value.Interface())
 		if err != nil {
 			restoreData(f.data, original)
-
 			return fmt.Errorf(
 				"failed to marshal record %q: %w",
 				id,
@@ -316,7 +322,6 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 	if err := f.save(); err != nil {
 		restoreData(f.data, original)
 		f.file.Version = oldVersion
-
 		return err
 	}
 
@@ -572,4 +577,58 @@ func setID(
 	field.SetString(id)
 
 	return nil
+}
+
+func setTimestamps(value any, updateExisting bool) error {
+	v := reflect.ValueOf(value)
+
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return fmt.Errorf("value must be a non-nil pointer")
+	}
+
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return fmt.Errorf("value must be a pointer to struct")
+	}
+
+	now := time.Now()
+
+	for _, name := range []string{"CreatedAt", "UpdatedAt"} {
+		field := v.FieldByName(name)
+
+		if !field.IsValid() || !field.CanSet() ||
+			field.Type() != reflect.TypeOf(time.Time{}) {
+			continue
+		}
+
+		if name == "UpdatedAt" && updateExisting {
+			field.Set(reflect.ValueOf(now))
+			continue
+		}
+
+		if field.IsZero() {
+			field.Set(reflect.ValueOf(now))
+		}
+	}
+
+	return nil
+}
+
+func setMapTimestamps(data map[string]any, updateExisting bool) {
+	now := time.Now()
+
+	if createdAt, exists := data["created_at"]; exists {
+		if createdAt == nil || createdAt == "" {
+			data["created_at"] = now
+		}
+	} else {
+		data["created_at"] = now
+	}
+
+	if updateExisting {
+		data["updated_at"] = now
+	} else if updatedAt, exists := data["updated_at"]; !exists ||
+		updatedAt == nil || updatedAt == "" {
+		data["updated_at"] = now
+	}
 }
