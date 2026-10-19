@@ -94,12 +94,12 @@ func (f *DatabaseFile) Update(value any) error {
 
 	id := idField.String()
 	if id == "" {
-		return errors.New("id cannot be empty")
+		return ErrNullID
 	}
 
 	old, exists := f.data[id]
 	if !exists {
-		return RecordNotFound
+		return ErrRecordNotFound
 	}
 
 	if err := setTimestamps(value, true); err != nil {
@@ -204,7 +204,7 @@ func (f *DatabaseFile) Delete(
 	defer f.mu.Unlock()
 
 	if id == "" {
-		return nil, errors.New("id cannot be empty")
+		return nil, ErrNullID
 	}
 
 	old, exists := f.data[id]

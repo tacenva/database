@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	RecordNotFound = errors.New("Record Not Found")
+	ErrRecordNotFound = errors.New("Record Not Found")
+	ErrNullID         = errors.New("id cannot be empty")
 )
 
 type Query struct {
@@ -48,12 +49,12 @@ func (f *DatabaseFile) Find(
 	defer f.mu.Unlock()
 
 	if id == "" {
-		return errors.New("id cannot be empty")
+		return ErrNullID
 	}
 
 	raw, exists := f.data[id]
 	if !exists {
-		return RecordNotFound
+		return ErrRecordNotFound
 	}
 
 	if err := validateDestination(dest); err != nil {
@@ -391,7 +392,7 @@ func (f *DatabaseFile) FindFirstWhere(
 		}
 		return nil
 	}
-	return RecordNotFound
+	return ErrRecordNotFound
 }
 
 // validateDestination validates that dest is a non-nil pointer
@@ -464,7 +465,7 @@ func setDestinationID(
 	id string,
 ) error {
 	if id == "" {
-		return errors.New("id cannot be empty")
+		return ErrNullID
 	}
 
 	v := reflect.ValueOf(dest)

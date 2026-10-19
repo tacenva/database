@@ -139,9 +139,7 @@ func (f *DatabaseFile) UpdateRaw(
 	}
 
 	if id == "" {
-		return errors.New(
-			"id cannot be empty",
-		)
+		return ErrNullID
 	}
 
 	if len(data) == 0 {
@@ -153,7 +151,7 @@ func (f *DatabaseFile) UpdateRaw(
 	old, exists := f.data[id]
 
 	if !exists {
-		return RecordNotFound
+		return ErrRecordNotFound
 	}
 
 	raw, err := json.Marshal(string(data))
@@ -192,15 +190,13 @@ func (f *DatabaseFile) FindRaw(
 	}
 
 	if id == "" {
-		return nil, errors.New(
-			"id cannot be empty",
-		)
+		return nil, ErrNullID
 	}
 
 	raw, exists := f.data[id]
 
 	if !exists {
-		return nil, RecordNotFound
+		return nil, ErrRecordNotFound
 	}
 
 	var data string
@@ -270,18 +266,13 @@ func (f *DatabaseFile) DeleteRaw(
 	}
 
 	if id == "" {
-		return errors.New(
-			"id cannot be empty",
-		)
+		return ErrNullID
 	}
 
 	old, exists := f.data[id]
 
 	if !exists {
-		return fmt.Errorf(
-			"record %q not found",
-			id,
-		)
+		return ErrRecordNotFound
 	}
 
 	delete(f.data, id)
