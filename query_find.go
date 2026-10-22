@@ -19,7 +19,7 @@ type Query struct {
 	db     *DatabaseFile
 	dest   any
 	orders []OrderClause
-	Err    error
+	Error  error
 }
 
 type OrderClause struct {
@@ -99,7 +99,7 @@ func (f *DatabaseFile) FindAll(dest any) *Query {
 
 	v, err := validateSliceDestination(dest)
 	if err != nil {
-		q.Err = err
+		q.Error = err
 		return q
 	}
 
@@ -110,12 +110,12 @@ func (f *DatabaseFile) FindAll(dest any) *Query {
 		item := reflect.New(slice.Type().Elem())
 
 		if err := json.Unmarshal(raw, item.Interface()); err != nil {
-			q.Err = err
+			q.Error = err
 			return q
 		}
 
 		if err := setDestinationID(item.Interface(), id); err != nil {
-			q.Err = err
+			q.Error = err
 			return q
 		}
 
@@ -126,7 +126,7 @@ func (f *DatabaseFile) FindAll(dest any) *Query {
 }
 
 func (q *Query) Order(clause string) *Query {
-	if q.Err != nil {
+	if q.Error != nil {
 		return q
 	}
 
@@ -134,7 +134,7 @@ func (q *Query) Order(clause string) *Query {
 		fields := strings.Fields(strings.TrimSpace(part))
 
 		if len(fields) < 1 || len(fields) > 2 {
-			q.Err = fmt.Errorf("invalid order clause: %q", part)
+			q.Error = fmt.Errorf("invalid order clause: %q", part)
 			return q
 		}
 
@@ -146,7 +146,7 @@ func (q *Query) Order(clause string) *Query {
 			case "DESC":
 				order.Desc = true
 			default:
-				q.Err = fmt.Errorf(
+				q.Error = fmt.Errorf(
 					"invalid order direction: %q", fields[1],
 				)
 				return q
@@ -157,7 +157,7 @@ func (q *Query) Order(clause string) *Query {
 	}
 
 	if err := q.applyOrders(); err != nil {
-		q.Err = err
+		q.Error = err
 	}
 
 	return q
@@ -318,13 +318,13 @@ func (f *DatabaseFile) FindWhere(
 	defer f.mu.Unlock()
 
 	if predicate == nil {
-		q.Err = errors.New("predicate cannot be nil")
+		q.Error = errors.New("predicate cannot be nil")
 		return q
 	}
 
 	v, err := validateSliceDestination(dest)
 	if err != nil {
-		q.Err = err
+		q.Error = err
 		return q
 	}
 
@@ -335,7 +335,7 @@ func (f *DatabaseFile) FindWhere(
 		var data map[string]any
 
 		if err := json.Unmarshal(raw, &data); err != nil {
-			q.Err = err
+			q.Error = err
 			return q
 		}
 
@@ -346,12 +346,12 @@ func (f *DatabaseFile) FindWhere(
 		item := reflect.New(slice.Type().Elem())
 
 		if err := json.Unmarshal(raw, item.Interface()); err != nil {
-			q.Err = err
+			q.Error = err
 			return q
 		}
 
 		if err := setDestinationID(item.Interface(), id); err != nil {
-			q.Err = err
+			q.Error = err
 			return q
 		}
 

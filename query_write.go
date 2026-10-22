@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,43 +11,119 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+type MutationResult struct {
+	ID       string
+	Inserted int
+	Updated  int
+	Deleted  int
+	Total    int
+	Error    error
+}
+
+func (r *MutationResult) addInserted() {
+	r.Inserted++
+	r.Total++
+}
+
+func (r *MutationResult) addUpdated() {
+	r.Updated++
+	r.Total++
+}
+
+func (r *MutationResult) addDeleted() {
+	r.Deleted++
+	r.Total++
+}
+
+func mutationError(err error) MutationResult {
+	return MutationResult{Error: err}
+}
+
+func sameRecord(
+	old json.RawMessage,
+	updated json.RawMessage,
+) (bool, error) {
+	var oldData map[string]any
+	var updatedData map[string]any
+
+	if err := json.Unmarshal(old, &oldData); err != nil {
+		return false, err
+	}
+
+	if err := json.Unmarshal(updated, &updatedData); err != nil {
+		return false, err
+	}
+
+	delete(oldData, "updated_at")
+	delete(updatedData, "updated_at")
+
+	oldJSON, err := json.Marshal(oldData)
+	if err != nil {
+		return false, err
+	}
+
+	updatedJSON, err := json.Marshal(updatedData)
+	if err != nil {
+		return false, err
+	}
+
+	return bytes.Equal(oldJSON, updatedJSON), nil
+}
+
 // Insert adds a new record to the database.
 //
 // The record ID is generated automatically using ULID.
 // The value must be a non-nil pointer to a struct
 // containing a settable string field named ID.
-func (f *DatabaseFile) Insert(value any) (string, error) {
+func (f *DatabaseFile) Insert(value any) MutationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if err := validateValue(value); err != nil {
-		return "", err
+		return mutationError(err)
 	}
 
 	id, err := getID(value)
 	if err != nil {
-		return "", err
+		return mutationError(err)
 	}
 
 	if id == "" {
 		id = ulid.Make().String()
 
 		if err := setID(value, id); err != nil {
-			return "", err
+			return mutationError(err)
 		}
 	}
 
 	if err := setTimestamps(value, false); err != nil {
-		return "", err
+		return mutationError(err)
 	}
 
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return "", err
+		return mutationError(err)
 	}
 
 	oldVersion := f.file.Version
 	old, existed := f.data[id]
+
+	result := MutationResult{ID: id}
+
+	if existed {
+		same, err := sameRecord(old, raw)
+		if err != nil {
+			return mutationError(err)
+		}
+
+		if same {
+			return result
+		}
+
+		result.addUpdated()
+	} else {
+		result.addInserted()
+	}
 
 	f.data[id] = raw
 	f.file.Version++
@@ -59,56 +136,77 @@ func (f *DatabaseFile) Insert(value any) (string, error) {
 		}
 
 		f.file.Version = oldVersion
-		return "", err
+		return mutationError(err)
 	}
 
-	return id, nil
+	return result
 }
 
 // Update updates a single record by its ID.
 //
 // The value must be a non-nil pointer to a struct.
 // The ID field of value is used as the record ID.
-func (f *DatabaseFile) Update(value any) error {
+func (f *DatabaseFile) Update(value any) MutationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if err := validateValue(value); err != nil {
-		return err
+		return mutationError(err)
 	}
 
 	v := reflect.ValueOf(value)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
-		return errors.New("value must be a non-nil pointer")
+		return mutationError(
+			errors.New("value must be a non-nil pointer"),
+		)
 	}
 
 	v = v.Elem()
 	if v.Kind() != reflect.Struct {
-		return errors.New("value must be a pointer to struct")
+		return mutationError(
+			errors.New("value must be a pointer to struct"),
+		)
 	}
 
 	idField := v.FieldByName("ID")
 	if !idField.IsValid() || idField.Kind() != reflect.String {
-		return errors.New("value must contain a string ID field")
+		return mutationError(
+			errors.New("value must contain a string ID field"),
+		)
 	}
 
 	id := idField.String()
 	if id == "" {
-		return ErrNullID
+		return mutationError(ErrNullID)
 	}
 
 	old, exists := f.data[id]
 	if !exists {
-		return ErrRecordNotFound
+		return mutationError(ErrRecordNotFound)
+	}
+
+	// Bandingkan sebelum mengubah timestamp.
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return mutationError(err)
+	}
+
+	same, err := sameRecord(old, raw)
+	if err != nil {
+		return mutationError(err)
+	}
+
+	if same {
+		return MutationResult{ID: id}
 	}
 
 	if err := setTimestamps(value, true); err != nil {
-		return err
+		return mutationError(err)
 	}
 
-	raw, err := json.Marshal(value)
+	raw, err = json.Marshal(value)
 	if err != nil {
-		return err
+		return mutationError(err)
 	}
 
 	oldVersion := f.file.Version
@@ -119,10 +217,13 @@ func (f *DatabaseFile) Update(value any) error {
 	if err := f.save(); err != nil {
 		f.data[id] = old
 		f.file.Version = oldVersion
-		return err
+		return mutationError(err)
 	}
 
-	return nil
+	result := MutationResult{ID: id}
+	result.addUpdated()
+
+	return result
 }
 
 // UpdateWhere updates all records that match the predicate.
@@ -135,36 +236,36 @@ func (f *DatabaseFile) Update(value any) error {
 func (f *DatabaseFile) UpdateWhere(
 	predicate func(map[string]any) bool,
 	updater func(map[string]any) error,
-) error {
+) MutationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if predicate == nil {
-		return errors.New("predicate cannot be nil")
+		return mutationError(errors.New("predicate cannot be nil"))
 	}
 
 	if updater == nil {
-		return errors.New("updater cannot be nil")
+		return mutationError(errors.New("updater cannot be nil"))
 	}
 
 	original := make(map[string]json.RawMessage)
+	result := MutationResult{}
 
 	for id, raw := range f.data {
 		var data map[string]any
 
 		if err := json.Unmarshal(raw, &data); err != nil {
-			return err
+			restoreData(f.data, original)
+			return mutationError(err)
 		}
 
 		if !predicate(data) {
 			continue
 		}
 
-		original[id] = raw
-
 		if err := updater(data); err != nil {
 			restoreData(f.data, original)
-			return err
+			return mutationError(err)
 		}
 
 		setMapTimestamps(data, true)
@@ -172,14 +273,26 @@ func (f *DatabaseFile) UpdateWhere(
 		updated, err := json.Marshal(data)
 		if err != nil {
 			restoreData(f.data, original)
-			return err
+			return mutationError(err)
 		}
 
+		same, err := sameRecord(raw, updated)
+		if err != nil {
+			restoreData(f.data, original)
+			return mutationError(err)
+		}
+
+		if same {
+			continue
+		}
+
+		original[id] = raw
 		f.data[id] = updated
+		result.addUpdated()
 	}
 
-	if len(original) == 0 {
-		return nil
+	if result.Total == 0 {
+		return result
 	}
 
 	oldVersion := f.file.Version
@@ -188,28 +301,26 @@ func (f *DatabaseFile) UpdateWhere(
 	if err := f.save(); err != nil {
 		restoreData(f.data, original)
 		f.file.Version = oldVersion
-		return err
+		return mutationError(err)
 	}
 
-	return nil
+	return result
 }
 
 // Delete deletes a single record by its ID.
 //
 // The deleted record is returned after a successful delete.
-func (f *DatabaseFile) Delete(
-	id string,
-) (json.RawMessage, error) {
+func (f *DatabaseFile) Delete(id string) MutationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if id == "" {
-		return nil, ErrNullID
+		return mutationError(ErrNullID)
 	}
 
 	old, exists := f.data[id]
 	if !exists {
-		return nil, nil
+		return MutationResult{}
 	}
 
 	oldVersion := f.file.Version
@@ -220,11 +331,13 @@ func (f *DatabaseFile) Delete(
 	if err := f.save(); err != nil {
 		f.data[id] = old
 		f.file.Version = oldVersion
-
-		return nil, err
+		return mutationError(err)
 	}
 
-	return old, nil
+	result := MutationResult{ID: id}
+	result.addDeleted()
+
+	return result
 }
 
 // UpdateOrCreateBulk inserts or updates multiple records
@@ -236,36 +349,40 @@ func (f *DatabaseFile) Delete(
 // using the provided ID.
 //
 // The version is incremented once for the entire operation.
-func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
+func (f *DatabaseFile) UpdateOrCreateBulk(values any) MutationResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if values == nil {
-		return errors.New("values cannot be nil")
+		return mutationError(errors.New("values cannot be nil"))
 	}
 
 	v := reflect.ValueOf(values)
 
 	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
-		return errors.New("values must be a slice or array")
+		return mutationError(
+			errors.New("values must be a slice or array"),
+		)
 	}
 
 	original := make(map[string]json.RawMessage)
+	result := MutationResult{}
 
 	for i := 0; i < v.Len(); i++ {
 		value := v.Index(i)
 
 		if value.Kind() != reflect.Ptr || value.IsNil() {
 			restoreData(f.data, original)
-			return fmt.Errorf(
-				"value at index %d must be a non-nil pointer",
-				i,
-			)
+			return mutationError(fmt.Errorf(
+				"value at index %d must be a non-nil pointer", i,
+			))
 		}
 
 		if err := validateValue(value.Interface()); err != nil {
 			restoreData(f.data, original)
-			return fmt.Errorf("value at index %d: %w", i, err)
+			return mutationError(fmt.Errorf(
+				"value at index %d: %w", i, err,
+			))
 		}
 
 		structValue := value.Elem()
@@ -273,10 +390,9 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 
 		if !idField.IsValid() || idField.Kind() != reflect.String {
 			restoreData(f.data, original)
-			return fmt.Errorf(
-				"value at index %d: ID field must be a string",
-				i,
-			)
+			return mutationError(fmt.Errorf(
+				"value at index %d: ID field must be a string", i,
+			))
 		}
 
 		id := idField.String()
@@ -286,34 +402,53 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 			idField.SetString(id)
 		}
 
-		if _, exists := original[id]; !exists {
-			if old, exists := f.data[id]; exists {
+		old, existed := f.data[id]
+
+		if err := setTimestamps(value.Interface(), !existed); err != nil {
+			restoreData(f.data, original)
+			return mutationError(err)
+		}
+
+		raw, err := json.Marshal(value.Interface())
+		if err != nil {
+			restoreData(f.data, original)
+			return mutationError(fmt.Errorf(
+				"failed to marshal record %q: %w", id, err,
+			))
+		}
+
+		if existed {
+			same, err := sameRecord(old, raw)
+			if err != nil {
+				restoreData(f.data, original)
+				return mutationError(err)
+			}
+
+			if same {
+				continue
+			}
+		}
+
+		if _, tracked := original[id]; !tracked {
+			if existed {
 				original[id] = old
 			} else {
 				original[id] = nil
 			}
 		}
 
-		if err := setTimestamps(value.Interface(), false); err != nil {
-			restoreData(f.data, original)
-			return err
-		}
-
-		raw, err := json.Marshal(value.Interface())
-		if err != nil {
-			restoreData(f.data, original)
-			return fmt.Errorf(
-				"failed to marshal record %q: %w",
-				id,
-				err,
-			)
-		}
-
 		f.data[id] = raw
+
+		if existed {
+			result.Updated++
+		} else {
+			result.Inserted++
+		}
+		result.Total++
 	}
 
-	if len(original) == 0 {
-		return nil
+	if result.Total == 0 {
+		return result
 	}
 
 	oldVersion := f.file.Version
@@ -322,10 +457,10 @@ func (f *DatabaseFile) UpdateOrCreateBulk(values any) error {
 	if err := f.save(); err != nil {
 		restoreData(f.data, original)
 		f.file.Version = oldVersion
-		return err
+		return mutationError(err)
 	}
 
-	return nil
+	return result
 }
 
 // Sync synchronizes the database with the provided records.
