@@ -97,7 +97,7 @@ func (f *DatabaseFile) InsertRaw(
 
 	if _, exists := f.data[*id]; exists {
 		return fmt.Errorf(
-			"record %q already exists",
+			"record %s already exists",
 			id,
 		)
 	}
