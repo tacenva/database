@@ -91,7 +91,7 @@ func (db *DB) ReadMetadataOnly(
 		return nil, err
 	}
 
-	file.Records = nil
+	file.Records = make([]structure.EncryptedRecord, 0)
 	return json.Marshal(file)
 }
 
