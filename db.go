@@ -43,7 +43,8 @@ type DatabaseFile struct {
 
 	mu sync.RWMutex
 
-	raw bool
+	raw      bool
+	txActive bool
 }
 
 func New(baseDir string) *DB {
@@ -277,6 +278,10 @@ func (db *DB) openFile(
 }
 
 func (f *DatabaseFile) save() error {
+	if f.txActive {
+		return nil
+	}
+
 	records := make(
 		[]structure.EncryptedRecord,
 		0,
@@ -367,6 +372,12 @@ func (f *DatabaseFile) ChangePassword(
 ) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if f.txActive {
+		return errors.New(
+			"change password is not supported inside a transaction",
+		)
+	}
 
 	if currentPassword == "" {
 		return ErrInvalidPassword

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/tacenva/database/internal/structure"
@@ -91,6 +90,10 @@ func (f *DatabaseFile) InsertRaw(
 		)
 	}
 
+	if id == nil {
+		id = new(string)
+	}
+
 	if *id == "" {
 		*id = ulid.Make().String()
 	}
@@ -98,7 +101,7 @@ func (f *DatabaseFile) InsertRaw(
 	if _, exists := f.data[*id]; exists {
 		return fmt.Errorf(
 			"record %s already exists",
-			id,
+			*id,
 		)
 	}
 
@@ -291,6 +294,10 @@ func (f *DatabaseFile) DeleteRaw(
 }
 
 func (f *DatabaseFile) saveRaw() error {
+	if f.txActive {
+		return nil
+	}
+
 	if !f.raw {
 		return errors.New(
 			"database file is not in raw mode",
@@ -360,4 +367,4 @@ func (f *DatabaseFile) RawVersion() uint64 {
 	return f.file.Version
 }
 
-var _ sync.Locker
+// var _ sync.Locker
