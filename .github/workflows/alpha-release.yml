@@ -2,7 +2,9 @@
 name: Alpha Release
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - alpha
 
 permissions:
   contents: read
@@ -23,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
@@ -66,6 +68,15 @@ jobs:
 
           echo "Next release: $NEW_TAG"
 
+      - name: Verify token permissions
+        run: |
+          echo "Authenticated as:"
+          gh api user --jq '.login'
+
+          echo "Repository permissions:"
+          gh api repos/tacenva/database \
+            --jq '.permissions'
+            
       - name: Create Git tag
         env:
           NEW_TAG: ${{ steps.version.outputs.tag }}
